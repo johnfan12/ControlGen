@@ -1,37 +1,39 @@
 # ControlGen
 
-ControlGen is a dataset generator for control-structure-to-time-series tasks. The current
-version uses a state-space simulation core, supports richer linear SISO structure families,
-and can also generate minimal 2x2 linear MIMO closed-loop systems.
+ControlGen is a mechanistic dataset generator for structure-to-time-series tasks in control systems.
+The current version focuses on realistic SISO control chains built from a modular control graph:
+reference, error summing junction, controller, actuator, plant, disturbance, sensor, and measurement noise.
 
 ## What is implemented
 
-- Function-style `ControlDSL` for `tf`, `gain`, `matgain`, `pid`, `delay`, `ss`, `series`, `parallel`, `feedback`
-- Unified continuous-time state-space backend for SISO and 2x2 MIMO systems
-- Richer SISO structure families: PID feedback, lead-lag, cascade compensator, feedforward, two-degree-of-freedom, sensor filtering
-- Parameter families for `balanced`, `fast`, `oscillatory`, and `stiff` dynamics
-- Input families for `standard` and `benchmark` trajectories
-- Dataset samples with 2D `u/y`, state-space views, split tags, and nested metrics
-- CLI and notebook support for both SISO and MIMO visualization
+- Modular graph DSL with `loop`, `reference`, `sum`, `controller`, `actuator`, `plant`, `disturbance`, `sensor`, `noise`, and `tap`
+- Low-level dynamic block support for `tf`, `gain`, `pid`, `delay`, `ss`, `series`, `parallel`, and `feedback`
+- Parameterized module library for controller, actuator, plant, disturbance path, and sensor dynamics
+- Realistic scenario sampling for reference signals, load disturbances, and measurement noise
+- Multi-signal simulation producing `r`, `d`, `n`, `e`, `u_cmd`, `u_act`, `y`, and `y_m`
+- Dataset schema with `graph_dsl`, `module_params`, `scenario`, `signals`, state-space module views, and mechanism-oriented metrics
 
 ## Quick start
 
 ```bash
 python3 -m pip install -e .[dev]
-python3 -m controlgen.cli --count 3 --seed 42 --system-mode mixed
+python3 -m controlgen.cli --count 3 --seed 42
 pytest
 ```
 
-## Sample DSL
+## Sample Graph DSL
 
 ```text
-feedback(
-  forward=series(
-    pid(kp=1.0, ki=0.3, kd=0.1, tau=0.05, name='controller'),
-    tf(num=[1.0], den=[1.0, 1.5, 0.5], name='plant')
-  ),
-  feedback=gain(k=1.0, name='sensor'),
-  sign=-1
+loop(
+  reference=reference(kind='multistep', name='reference'),
+  sum=sum(signs=[1, -1], name='error_sum'),
+  controller=controller(kind='pid', name='controller'),
+  actuator=actuator(kind='lag_saturation', name='actuator'),
+  plant=plant(kind='delay_plus_lag', name='plant'),
+  disturbance=disturbance(kind='load_step', injection='output', name='disturbance'),
+  sensor=sensor(kind='lag', name='sensor'),
+  noise=noise(kind='white_noise', name='measurement_noise'),
+  taps=[tap(signal='r', name='tap_r'), tap(signal='y', name='tap_y')]
 )
 ```
 
@@ -39,17 +41,18 @@ feedback(
 
 Each sample contains:
 
-- `dsl_text`: serialized control structure
-- `ast`: JSON-friendly tree form
-- `system_view`: DSL, AST, and state-space matrices
-- `input_spec`: input family and parameters
-- `input_channels`, `output_channels`: I/O dimensions
-- `t`, `u`, `y`: time axis and 2D input/output trajectories
-- `metrics`: nested system metrics and per-output channel metrics
-- `tags`, `split_tags`: structure family, parameter family, input family, controller family, and I/O shape
+- `graph_dsl`: serialized modular control graph
+- `graph_ast`: JSON-friendly graph tree
+- `module_params`: instantiated controller, actuator, plant, disturbance path, and sensor parameters
+- `scenario`: reference, disturbance, noise, and simulation settings
+- `t`: time axis
+- `signals`: `r`, `d`, `n`, `e`, `u_cmd`, `u_act`, `y`, `y_m`
+- `system_view`: per-module linear state-space cores and nonlinear wrappers such as actuator saturation
+- `metrics`: tracking, control effort, disturbance rejection, and measurement-chain metrics
+- `tags`, `split_tags`: structure family, controller family, plant family, disturbance family, and reference family
 
 ## Notes
 
-- The backend targets continuous-time linear systems.
-- MIMO support is currently limited to 2x2 coupled systems with diagonal PID or static decoupler plus diagonal PID control.
-- Delays use a Padé approximation when enabled in the structure generator.
+- The current release targets mechanistic SISO control loops.
+- The linear core is simulated through discretized state-space blocks; actuator saturation is handled in the time-domain loop.
+- Delays use a Padé approximation inside low-level dynamic modules.
