@@ -5,12 +5,21 @@ import json
 from pathlib import Path
 
 from controlgen.generator import DatasetConfig, generate_dataset
+from controlgen.simulate import SimulationConfig
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate ControlGen dataset samples")
     parser.add_argument("--count", type=int, default=5, help="Number of samples to generate")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed")
+    parser.add_argument(
+        "--system-mode",
+        choices=("siso", "mimo", "mixed"),
+        default="mixed",
+        help="Whether to generate SISO, 2x2 MIMO, or mixed samples",
+    )
+    parser.add_argument("--duration", type=float, default=10.0, help="Simulation duration")
+    parser.add_argument("--dt", type=float, default=0.01, help="Simulation time step")
     parser.add_argument(
         "--output",
         type=Path,
@@ -19,7 +28,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config = DatasetConfig(count=args.count, seed=args.seed)
+    system_mode = "mimo" if args.system_mode == "mimo" else args.system_mode
+    config = DatasetConfig(
+        count=args.count,
+        seed=args.seed,
+        system_mode=system_mode,
+        sim_config=SimulationConfig(duration=args.duration, dt=args.dt),
+    )
     samples = generate_dataset(config)
 
     if args.output is None:

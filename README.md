@@ -1,23 +1,24 @@
 # ControlGen
 
-ControlGen is a lightweight V1 dataset generator for control-structure-to-time-series tasks.
-It generates linear SISO control systems from a symbolic `ControlDSL`, samples stable
-parameters, simulates standard test inputs, and exports paired structure/trajectory samples.
+ControlGen is a dataset generator for control-structure-to-time-series tasks. The current
+version uses a state-space simulation core, supports richer linear SISO structure families,
+and can also generate minimal 2x2 linear MIMO closed-loop systems.
 
 ## What is implemented
 
-- Function-style `ControlDSL` for `tf`, `gain`, `pid`, `delay`, `series`, `parallel`, `feedback`
-- Stable parameter sampling for plant/controller templates
-- Continuous-time transfer-function algebra for composition and closed-loop reduction
-- Standard input simulation for `step`, `impulse`, `ramp`, `sine`
-- Dataset sample schema with trajectories, poles/zeros, and step-response metrics
-- CLI for exporting JSONL samples
+- Function-style `ControlDSL` for `tf`, `gain`, `matgain`, `pid`, `delay`, `ss`, `series`, `parallel`, `feedback`
+- Unified continuous-time state-space backend for SISO and 2x2 MIMO systems
+- Richer SISO structure families: PID feedback, lead-lag, cascade compensator, feedforward, two-degree-of-freedom, sensor filtering
+- Parameter families for `balanced`, `fast`, `oscillatory`, and `stiff` dynamics
+- Input families for `standard` and `benchmark` trajectories
+- Dataset samples with 2D `u/y`, state-space views, split tags, and nested metrics
+- CLI and notebook support for both SISO and MIMO visualization
 
 ## Quick start
 
 ```bash
 python3 -m pip install -e .[dev]
-python3 -m controlgen.cli --count 3 --seed 42
+python3 -m controlgen.cli --count 3 --seed 42 --system-mode mixed
 pytest
 ```
 
@@ -40,13 +41,15 @@ Each sample contains:
 
 - `dsl_text`: serialized control structure
 - `ast`: JSON-friendly tree form
+- `system_view`: DSL, AST, and state-space matrices
 - `input_spec`: input family and parameters
-- `t`, `u`, `y`: time axis, input trajectory, output trajectory
-- `metrics`: stability, poles, zeros, final value, and step metrics when applicable
-- `tags`: closed-loop flag, controller type, order, and difficulty
+- `input_channels`, `output_channels`: I/O dimensions
+- `t`, `u`, `y`: time axis and 2D input/output trajectories
+- `metrics`: nested system metrics and per-output channel metrics
+- `tags`, `split_tags`: structure family, parameter family, input family, controller family, and I/O shape
 
 ## Notes
 
-- V1 currently targets continuous-time linear SISO systems.
+- The backend targets continuous-time linear systems.
+- MIMO support is currently limited to 2x2 coupled systems with diagonal PID or static decoupler plus diagonal PID control.
 - Delays use a Padé approximation when enabled in the structure generator.
-- The default generator emphasizes stable closed-loop samples suitable for sequence modeling.
