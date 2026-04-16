@@ -6,21 +6,38 @@ from controlgen.generator import (
     DatasetConfig,
     GrammarConfig,
     SamplingConfig,
-    generate_graph,
     generate_dataset,
+    generate_graph,
     generate_sample,
     generate_structure,
+    iter_dataset,
     sample_parameters,
     sample_scenario,
 )
-from controlgen.simulate import ScenarioSpec, SignalBundle, SignalSpec, SimulationConfig, simulate
+from controlgen.simulate import (
+    ScenarioSpec,
+    SignalBundle,
+    SignalSpec,
+    SimulationConfig,
+    simulate,
+    simulate_graph,
+)
 from controlgen.transfer_function import (
     ParameterizedSystem,
     RationalTransferFunction,
     StateSpaceModel,
     tf_from_node,
 )
-from controlgen.types import ControlGraph, ControlNode, ParameterizedGraph
+from controlgen.types import (
+    ControlGraph,
+    ControlNode,
+    GraphEdgeSpec,
+    GraphNodeSpec,
+    ParameterizedGraph,
+    ParameterizedNode,
+    PortSpec,
+    TapSpec,
+)
 
 __all__ = [
     "ControlGraph",
@@ -28,8 +45,12 @@ __all__ = [
     "DatasetConfig",
     "DatasetSample",
     "GrammarConfig",
-    "ParameterizedSystem",
+    "GraphEdgeSpec",
+    "GraphNodeSpec",
     "ParameterizedGraph",
+    "ParameterizedNode",
+    "ParameterizedSystem",
+    "PortSpec",
     "RationalTransferFunction",
     "SamplingConfig",
     "ScenarioSpec",
@@ -37,16 +58,19 @@ __all__ = [
     "SignalSpec",
     "SimulationConfig",
     "StateSpaceModel",
+    "TapSpec",
     "ast_to_dict",
     "build_sample",
-    "generate_graph",
     "generate_dataset",
+    "generate_graph",
     "generate_sample",
     "generate_structure",
+    "iter_dataset",
     "parse_dsl",
     "sample_parameters",
     "sample_scenario",
     "serialize_dsl",
     "simulate",
+    "simulate_graph",
     "tf_from_node",
 ]

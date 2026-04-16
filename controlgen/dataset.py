@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from controlgen.dsl import ast_to_dict, serialize_dsl
 from controlgen.simulate import ScenarioSpec, SignalBundle
-from controlgen.transfer_function import tf_from_node
-from controlgen.types import ControlNode, ParameterizedGraph
+from controlgen.transfer_function import block_diagonal_systems, tf_from_node
+from controlgen.types import ControlNode, ParameterizedGraph, ParameterizedNode
 
 
 @dataclass(frozen=True)
@@ -15,25 +15,35 @@ class DatasetSample:
     sample_id: str
     graph_dsl: str
     graph_ast: dict[str, object]
+    graph_nodes: list[dict[str, object]]
+    graph_edges: list[dict[str, object]]
+    io_ports: dict[str, list[dict[str, object]]]
+    tap_specs: list[dict[str, object]]
     module_params: dict[str, dict[str, object]]
     scenario: dict[str, object]
     t: list[float]
-    signals: dict[str, list[float]]
-    system_view: dict[str, object]
-    metrics: dict[str, object]
-    tags: dict[str, object]
-    split_tags: dict[str, object]
-    seed: int
+    signals: dict[str, object]
+    teacher_signals: dict[str, list[list[float]]] = field(default_factory=dict)
+    system_view: dict[str, object] = field(default_factory=dict)
+    metrics: dict[str, object] = field(default_factory=dict)
+    tags: dict[str, object] = field(default_factory=dict)
+    split_tags: dict[str, object] = field(default_factory=dict)
+    seed: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
             "sample_id": self.sample_id,
             "graph_dsl": self.graph_dsl,
             "graph_ast": self.graph_ast,
+            "graph_nodes": self.graph_nodes,
+            "graph_edges": self.graph_edges,
+            "io_ports": self.io_ports,
+            "tap_specs": self.tap_specs,
             "module_params": self.module_params,
             "scenario": self.scenario,
             "t": self.t,
             "signals": self.signals,
+            "teacher_signals": self.teacher_signals,
             "system_view": self.system_view,
             "metrics": self.metrics,
             "tags": self.tags,
@@ -48,70 +58,111 @@ def build_sample(
     scenario: ScenarioSpec,
     metadata: dict[str, object],
 ) -> DatasetSample:
-    graph_ast = ast_to_dict(parameterized_graph.graph)
-    graph_dsl = serialize_dsl(parameterized_graph.graph)
-    metrics = _compute_metrics(parameterized_graph, signal_bundle)
+    graph = parameterized_graph.graph
+    graph_ast = ast_to_dict(graph) or {}
+    graph_dsl = serialize_dsl(graph)
     tags = {
-        "structure_family": parameterized_graph.structure_family,
-        "controller_family": parameterized_graph.controller_family,
-        "actuator_family": parameterized_graph.actuator_family,
-        "plant_family": parameterized_graph.plant_family,
-        "sensor_family": parameterized_graph.sensor_family,
-        "disturbance_family": parameterized_graph.disturbance_family,
-        "noise_family": parameterized_graph.noise_family,
-        "reference_family": parameterized_graph.graph.reference.kind,
-        "realism_level": "linear_with_disturbance_and_limits",
+        "topology_family": graph.topology_family,
+        "controller_family": graph.metadata.get("controller_family"),
+        "actuator_family": graph.metadata.get("actuator_family"),
+        "process_family": graph.metadata.get("process_family"),
+        "sensor_family": graph.metadata.get("sensor_family"),
+        "disturbance_family": graph.metadata.get("disturbance_family"),
+        "noise_family": graph.metadata.get("noise_family"),
+        "reference_family": graph.metadata.get("reference_family"),
+        "coupling_family": graph.metadata.get("coupling_family"),
         "closed_loop": True,
+        "io_shape": f"{parameterized_graph.graph_metrics['input_channels']}x{parameterized_graph.graph_metrics['output_channels']}",
     }
     split_tags = {
-        "structure_family": parameterized_graph.structure_family,
-        "controller_family": parameterized_graph.controller_family,
-        "plant_family": parameterized_graph.plant_family,
-        "disturbance_family": parameterized_graph.disturbance_family,
-        "reference_family": parameterized_graph.graph.reference.kind,
+        "graph_size_bucket": parameterized_graph.graph_metrics["graph_size_bucket"],
+        "topology_family": graph.topology_family,
+        "coupling_family": graph.metadata.get("coupling_family"),
+        "controller_family": graph.metadata.get("controller_family"),
+        "process_family": graph.metadata.get("process_family"),
+        "disturbance_family": graph.metadata.get("disturbance_family"),
+        "noise_family": graph.metadata.get("noise_family"),
     }
     return DatasetSample(
         sample_id=str(metadata["sample_id"]),
         graph_dsl=graph_dsl,
-        graph_ast=graph_ast or {},
+        graph_ast=graph_ast,
+        graph_nodes=graph_ast.get("nodes", []),  # type: ignore[assignment]
+        graph_edges=graph_ast.get("edges", []),  # type: ignore[assignment]
+        io_ports={
+            "input_ports": graph_ast.get("input_ports", []),  # type: ignore[assignment]
+            "output_ports": graph_ast.get("output_ports", []),  # type: ignore[assignment]
+        },
+        tap_specs=graph_ast.get("taps", []),  # type: ignore[assignment]
         module_params=parameterized_graph.module_params,
         scenario=scenario.as_serializable(),
         t=signal_bundle.t.tolist(),
-        signals={name: values.tolist() for name, values in signal_bundle.signals.items()},
-        system_view=_build_system_view(parameterized_graph, graph_ast or {}),
-        metrics=metrics,
+        signals=_signals_to_serializable(signal_bundle),
+        teacher_signals={name: values.tolist() for name, values in signal_bundle.teacher_signals.items()},
+        system_view=_build_system_view(parameterized_graph, graph_ast),
+        metrics=_compute_metrics(parameterized_graph, signal_bundle),
         tags=tags,
         split_tags=split_tags,
         seed=int(metadata["seed"]),
     )
 
 
+def _signals_to_serializable(signal_bundle: SignalBundle) -> dict[str, object]:
+    return {
+        "external_inputs": {name: values.tolist() for name, values in signal_bundle.external_inputs.items()},
+        "primary_outputs": {name: values.tolist() for name, values in signal_bundle.primary_outputs.items()},
+        "tap_signals": {name: values.tolist() for name, values in signal_bundle.tap_signals.items()},
+        "disturbance_signals": {name: values.tolist() for name, values in signal_bundle.disturbance_signals.items()},
+        "noise_signals": {name: values.tolist() for name, values in signal_bundle.noise_signals.items()},
+    }
+
+
 def _build_system_view(
     parameterized_graph: ParameterizedGraph,
     graph_ast: dict[str, object],
 ) -> dict[str, object]:
-    module_state_space = {}
-    for name, node in (
-        ("controller", parameterized_graph.controller_dynamics),
-        ("actuator", parameterized_graph.actuator_dynamics),
-        ("plant_control", parameterized_graph.plant_control_dynamics),
-        ("plant_disturbance", parameterized_graph.plant_disturbance_dynamics),
-        ("sensor", parameterized_graph.sensor_dynamics),
-    ):
-        if node is None:
-            module_state_space[name] = None
+    node_models = {}
+    systems = []
+    for node in parameterized_graph.nodes:
+        if node.dynamics is None:
+            node_models[node.spec.node_id] = {
+                "kind": node.spec.kind,
+                "family": node.spec.family,
+                "dynamics": None,
+                "nonlinearity": node.nonlinearity,
+                "bias": node.bias,
+            }
             continue
-        module_state_space[name] = _state_space_view(node)
-    nonlinear_wrappers = {
-        "actuator_saturation": {
-            "enabled": parameterized_graph.actuator_saturation_limit is not None,
-            "limit": parameterized_graph.actuator_saturation_limit,
+        state_space = _state_space_view(node.dynamics)
+        node_models[node.spec.node_id] = {
+            "kind": node.spec.kind,
+            "family": node.spec.family,
+            "dynamics": state_space,
+            "nonlinearity": node.nonlinearity,
+            "saturation_limit": node.saturation_limit,
+            "rate_limit": node.rate_limit,
+            "bias": node.bias,
         }
-    }
+        systems.append(tf_from_node(node.dynamics))
+    assembled = None
+    if systems:
+        block = block_diagonal_systems(systems)
+        assembled = {
+            "state_dimension": block.state_dimension,
+            "a": block.a.tolist(),
+            "b": block.b.tolist(),
+            "c": block.c.tolist(),
+            "d": block.d.tolist(),
+        }
     return {
         "graph_ast": graph_ast,
-        "state_space_linear_core": module_state_space,
-        "nonlinear_wrappers": nonlinear_wrappers,
+        "node_models": node_models,
+        "assembled_linear_core": assembled,
+        "optional_hidden_states": {
+            "enabled": True,
+            "policy": "optional_teacher",
+            "signals": [f"{node.spec.node_id}:state" for node in parameterized_graph.nodes if _node_state_dimension(node) > 0],
+        },
     }
 
 
@@ -123,96 +174,74 @@ def _state_space_view(node: ControlNode) -> dict[str, object]:
         "b": system.b.tolist(),
         "c": system.c.tolist(),
         "d": system.d.tolist(),
+        "input_channels": system.input_channels,
+        "output_channels": system.output_channels,
+        "state_dimension": system.state_dimension,
     }
 
 
 def _compute_metrics(parameterized_graph: ParameterizedGraph, signal_bundle: SignalBundle) -> dict[str, object]:
-    signals = signal_bundle.signals
-    t = signal_bundle.t
-    r = np.asarray(signals["r"], dtype=float)
-    d = np.asarray(signals["d"], dtype=float)
-    e = np.asarray(signals["e"], dtype=float)
-    u_cmd = np.asarray(signals["u_cmd"], dtype=float)
-    u_act = np.asarray(signals["u_act"], dtype=float)
-    y = np.asarray(signals["y"], dtype=float)
-    y_m = np.asarray(signals["y_m"], dtype=float)
-    n = np.asarray(signals["n"], dtype=float)
-
-    tracking = _tracking_metrics(t, r, y, e)
-    control_effort = {
-        "u_cmd_rms": _rms(u_cmd),
-        "u_act_rms": _rms(u_act),
-        "u_cmd_peak": float(np.max(np.abs(u_cmd))) if len(u_cmd) else 0.0,
-        "u_act_peak": float(np.max(np.abs(u_act))) if len(u_act) else 0.0,
-        "saturation_ratio": float(np.mean(np.abs(u_act - u_cmd) > 1e-6)) if len(u_act) else 0.0,
+    system_metrics = {
+        "input_channels": parameterized_graph.graph_metrics["input_channels"],
+        "output_channels": parameterized_graph.graph_metrics["output_channels"],
+        "total_state_dimension": int(sum(_node_state_dimension(node) for node in parameterized_graph.nodes)),
+        "tap_count": parameterized_graph.graph_metrics["tap_count"],
+        "coupling_density": parameterized_graph.graph_metrics["coupling_density"],
     }
-    disturbance_metrics = _disturbance_metrics(t, r, d, y)
-    measurement_metrics = {
-        "measurement_noise_rms": _rms(y_m - y),
-        "sensor_bias": parameterized_graph.sensor_bias,
-        "noise_signal_rms": _rms(n),
+    primary = next(iter(signal_bundle.primary_outputs.values()))
+    reference = next(iter(signal_bundle.external_inputs.values()))
+    tracking = _tracking_metrics(reference, primary)
+    channel_metrics = {
+        "primary_outputs": {
+            name: _channel_summary(values)
+            for name, values in signal_bundle.primary_outputs.items()
+        },
+        "tap_signals": {
+            name: _channel_summary(values)
+            for name, values in signal_bundle.tap_signals.items()
+        },
     }
     return {
-        "tracking": tracking,
-        "control_effort": control_effort,
-        "disturbance_rejection": disturbance_metrics,
-        "measurement": measurement_metrics,
+        "graph_metrics": parameterized_graph.graph_metrics,
+        "system_metrics": system_metrics,
+        "tracking_metrics": tracking,
+        "channel_metrics": channel_metrics,
     }
 
 
-def _tracking_metrics(t: np.ndarray, r: np.ndarray, y: np.ndarray, e: np.ndarray) -> dict[str, float]:
-    final_ref = float(r[-1]) if len(r) else 0.0
-    final_output = float(y[-1]) if len(y) else 0.0
-    steady_state_error = final_ref - final_output
-    peak = float(np.max(y)) if len(y) else 0.0
-    overshoot = 0.0
-    if abs(final_ref) > 1e-8:
-        overshoot = max(peak - final_ref, 0.0) / abs(final_ref)
-    settling_time = float(t[-1]) if len(t) else 0.0
-    if len(y):
-        band = 0.02 * max(abs(final_ref), 1e-6)
-        outside = np.where(np.abs(y - final_ref) > band)[0]
-        if len(outside) == 0:
-            settling_time = 0.0
-        elif outside[-1] + 1 < len(t):
-            settling_time = float(t[outside[-1] + 1])
+def _tracking_metrics(reference: np.ndarray, output: np.ndarray) -> dict[str, object]:
+    channels = min(reference.shape[1], output.shape[1]) if reference.ndim == 2 and output.ndim == 2 else 0
+    if channels == 0:
+        return {"dimension": 0, "error_rms": [], "output_final": [], "reference_final": []}
+    error = output[:, :channels] - reference[:, :channels]
     return {
-        "steady_state_error": float(steady_state_error),
-        "overshoot": float(overshoot),
-        "settling_time": float(settling_time),
-        "error_rms": _rms(e),
-        "output_final": final_output,
+        "dimension": channels,
+        "error_rms": _vector_rms(error),
+        "output_final": [float(value) for value in output[-1, :channels]],
+        "reference_final": [float(value) for value in reference[-1, :channels]],
+        "peak_error": [float(value) for value in np.max(np.abs(error), axis=0)],
     }
 
 
-def _disturbance_metrics(t: np.ndarray, r: np.ndarray, d: np.ndarray, y: np.ndarray) -> dict[str, float | None]:
-    active = np.where(np.abs(d) > 1e-9)[0]
-    if len(active) == 0:
-        return {
-            "disturbance_present": False,
-            "disturbance_onset": None,
-            "max_deviation_after_onset": None,
-            "recovery_time": None,
-        }
-    onset = int(active[0])
-    baseline = float(y[onset - 1]) if onset > 0 else float(y[0])
-    deviation = np.abs(y[onset:] - baseline)
-    max_deviation = float(np.max(deviation)) if len(deviation) else 0.0
-    recovery_time = float(t[-1]) if len(t) else 0.0
-    reference_tail = r[onset:]
-    band = 0.05 * max(abs(reference_tail[-1]) if len(reference_tail) else 0.0, 1e-6)
-    recovered = np.where(np.abs(y[onset:] - reference_tail) <= band)[0]
-    if len(recovered):
-        recovery_time = float(t[onset + recovered[0]] - t[onset])
+def _channel_summary(values: np.ndarray) -> dict[str, object]:
+    if values.ndim == 1:
+        values = values[:, None]
     return {
-        "disturbance_present": True,
-        "disturbance_onset": float(t[onset]),
-        "max_deviation_after_onset": max_deviation,
-        "recovery_time": recovery_time,
+        "dimension": int(values.shape[1]),
+        "rms": _vector_rms(values),
+        "peak_abs": [float(value) for value in np.max(np.abs(values), axis=0)],
+        "final": [float(value) for value in values[-1]],
     }
 
 
-def _rms(values: np.ndarray) -> float:
-    if len(values) == 0:
-        return 0.0
-    return float(np.sqrt(np.mean(np.square(values))))
+def _vector_rms(values: np.ndarray) -> list[float]:
+    if values.ndim == 1:
+        values = values[:, None]
+    return [float(np.sqrt(np.mean(np.square(values[:, idx])))) for idx in range(values.shape[1])]
+
+
+def _node_state_dimension(node: ParameterizedNode) -> int:
+    if node.dynamics is None:
+        return 0
+    system = tf_from_node(node.dynamics)
+    return int(system.state_dimension)

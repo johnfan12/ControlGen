@@ -1,39 +1,78 @@
 # ControlGen
 
-ControlGen is a mechanistic dataset generator for structure-to-time-series tasks in control systems.
-The current version focuses on realistic SISO control chains built from a modular control graph:
-reference, error summing junction, controller, actuator, plant, disturbance, sensor, and measurement noise.
+ControlGen is a graph-based control-system dataset generator for structure-to-time-series tasks.
+The current version targets layered large-scale MIMO control graphs with:
+
+- `3x3` to `5x5` style multi-input multi-output systems by default
+- `8-24` graph nodes sampled from reference, controller, actuator, process, sensor, disturbance, noise, and output layers
+- Dense, rule-based tap placement across external inputs, controller outputs, actuator outputs, process outputs, sensor outputs, and primary outputs
+- Linear node dynamics with local nonlinear wrappers such as saturation and rate limiting
+- Multi-channel scenario generation for reference inputs, disturbances, and measurement noise
 
 ## What is implemented
 
-- Modular graph DSL with `loop`, `reference`, `sum`, `controller`, `actuator`, `plant`, `disturbance`, `sensor`, `noise`, and `tap`
-- Low-level dynamic block support for `tf`, `gain`, `pid`, `delay`, `ss`, `series`, `parallel`, and `feedback`
-- Parameterized module library for controller, actuator, plant, disturbance path, and sensor dynamics
-- Realistic scenario sampling for reference signals, load disturbances, and measurement noise
-- Multi-signal simulation producing `r`, `d`, `n`, `e`, `u_cmd`, `u_act`, `y`, and `y_m`
-- Dataset schema with `graph_dsl`, `module_params`, `scenario`, `signals`, state-space module views, and mechanism-oriented metrics
+- Graph DSL with `graph`, `node`, `edge`, `port`, and `tap`
+- Low-level dynamic block DSL with `tf`, `gain`, `matgain`, `pid`, `delay`, `ss`, `series`, `parallel`, and `feedback`
+- Layered MIMO graph generator with dense coupling and delayed feedback edges
+- Graph-level simulation producing grouped signals:
+  - `external_inputs`
+  - `primary_outputs`
+  - `tap_signals`
+  - `disturbance_signals`
+  - `noise_signals`
+- Optional hidden-state teacher signals
+- Dataset schema with graph structure, scenario, grouped signals, node models, and graph/system/channel metrics
 
 ## Quick start
 
 ```bash
 python3 -m pip install -e .[dev]
-python3 -m controlgen.cli --count 3 --seed 42
-pytest
+python3 -m controlgen.cli --count 3 --seed 42 --min-nodes 12 --max-nodes 20 --min-io 4 --max-io 4
+pytest -q
 ```
 
 ## Sample Graph DSL
 
 ```text
-loop(
-  reference=reference(kind='multistep', name='reference'),
-  sum=sum(signs=[1, -1], name='error_sum'),
-  controller=controller(kind='pid', name='controller'),
-  actuator=actuator(kind='lag_saturation', name='actuator'),
-  plant=plant(kind='delay_plus_lag', name='plant'),
-  disturbance=disturbance(kind='load_step', injection='output', name='disturbance'),
-  sensor=sensor(kind='lag', name='sensor'),
-  noise=noise(kind='white_noise', name='measurement_noise'),
-  taps=[tap(signal='r', name='tap_r'), tap(signal='y', name='tap_y')]
+graph(
+  topology_family='layered_mimo_graph',
+  nodes=[
+    node(
+      id='ref_0',
+      kind='reference_source',
+      family='step',
+      layer='reference',
+      inputs=[],
+      outputs=[port(name='y', direction='output', dimension=4, role='reference')],
+      parameters={},
+      metadata={}
+    ),
+    node(
+      id='ctrl_0',
+      kind='controller_bank',
+      family='pi',
+      layer='controller',
+      inputs=[port(name='u', direction='input', dimension=2, role='controller_input')],
+      outputs=[port(name='y', direction='output', dimension=2, role='controller_output')],
+      parameters={},
+      metadata={}
+    )
+  ],
+  edges=[
+    edge(
+      id='edge_ref_ctrl_0',
+      source='ref_0',
+      source_port='y',
+      target='ctrl_0',
+      target_port='u',
+      matrix=[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+      role='reference'
+    )
+  ],
+  input_ports=[port(name='reference', direction='input', dimension=4, role='external_input')],
+  output_ports=[port(name='system_output', direction='output', dimension=4, role='primary_output')],
+  taps=[tap(id='tap_ref_0', source='ref_0', source_port='y', role='reference', visibility='primary', dimension=4)],
+  metadata={'primary_output_node': 'out_0', 'primary_output_port': 'y'}
 )
 ```
 
@@ -41,18 +80,32 @@ loop(
 
 Each sample contains:
 
-- `graph_dsl`: serialized modular control graph
-- `graph_ast`: JSON-friendly graph tree
-- `module_params`: instantiated controller, actuator, plant, disturbance path, and sensor parameters
-- `scenario`: reference, disturbance, noise, and simulation settings
-- `t`: time axis
-- `signals`: `r`, `d`, `n`, `e`, `u_cmd`, `u_act`, `y`, `y_m`
-- `system_view`: per-module linear state-space cores and nonlinear wrappers such as actuator saturation
-- `metrics`: tracking, control effort, disturbance rejection, and measurement-chain metrics
-- `tags`, `split_tags`: structure family, controller family, plant family, disturbance family, and reference family
+- `graph_dsl`, `graph_ast`, `graph_nodes`, `graph_edges`
+- `io_ports`, `tap_specs`
+- `module_params`
+- `scenario`
+- `t`
+- `signals`
+  - `external_inputs`
+  - `primary_outputs`
+  - `tap_signals`
+  - `disturbance_signals`
+  - `noise_signals`
+- `teacher_signals`
+- `system_view`
+  - `node_models`
+  - `assembled_linear_core`
+  - `optional_hidden_states`
+- `metrics`
+  - `graph_metrics`
+  - `system_metrics`
+  - `tracking_metrics`
+  - `channel_metrics`
+- `tags`, `split_tags`
 
 ## Notes
 
-- The current release targets mechanistic SISO control loops.
-- The linear core is simulated through discretized state-space blocks; actuator saturation is handled in the time-domain loop.
-- Delays use a Padé approximation inside low-level dynamic modules.
+- The generator is intentionally domain-agnostic; it models generic control graphs rather than a single industrial process.
+- Feedback edges are delayed at graph-simulation time to avoid algebraic loops.
+- Node dynamics are mostly linear state-space models; saturation and rate limits are handled locally during simulation.
+- Hidden states are kept as optional teacher signals so the main task can remain “graph + scenario -> observed multi-tap time series”.

@@ -90,91 +90,75 @@ ControlNode = Union[
 
 
 @dataclass(frozen=True)
-class ReferenceNode:
-    kind: str = "step"
-    name: str = field(default_factory=lambda: _default_name("reference"))
+class PortSpec:
+    name: str
+    direction: str
+    dimension: int
+    role: str = "internal"
 
 
 @dataclass(frozen=True)
-class SumNode:
-    signs: tuple[int, ...] = (1, -1)
-    name: str = field(default_factory=lambda: _default_name("sum"))
+class GraphNodeSpec:
+    node_id: str
+    kind: str
+    family: str
+    layer: str
+    input_ports: tuple[PortSpec, ...] = field(default_factory=tuple)
+    output_ports: tuple[PortSpec, ...] = field(default_factory=tuple)
+    parameters: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
-class ControllerNode:
-    kind: str = "pid"
-    name: str = field(default_factory=lambda: _default_name("controller"))
+class GraphEdgeSpec:
+    edge_id: str
+    source_node: str
+    source_port: str
+    target_node: str
+    target_port: str
+    matrix: Matrix | None = None
+    signal_role: str = "internal"
 
 
 @dataclass(frozen=True)
-class ActuatorNode:
-    kind: str = "ideal"
-    name: str = field(default_factory=lambda: _default_name("actuator"))
-
-
-@dataclass(frozen=True)
-class PlantNode:
-    kind: str = "first_order"
-    name: str = field(default_factory=lambda: _default_name("plant"))
-
-
-@dataclass(frozen=True)
-class DisturbanceNode:
-    kind: str = "load_step"
-    injection: str = "output"
-    name: str = field(default_factory=lambda: _default_name("disturbance"))
-
-
-@dataclass(frozen=True)
-class SensorNode:
-    kind: str = "ideal"
-    name: str = field(default_factory=lambda: _default_name("sensor"))
-
-
-@dataclass(frozen=True)
-class NoiseNode:
-    kind: str = "none"
-    name: str = field(default_factory=lambda: _default_name("noise"))
-
-
-@dataclass(frozen=True)
-class TapNode:
-    signal: str
-    name: str = field(default_factory=lambda: _default_name("tap"))
+class TapSpec:
+    tap_id: str
+    source_node: str
+    source_port: str
+    signal_role: str
+    visibility: str = "primary"
+    dimension: int = 1
 
 
 @dataclass(frozen=True)
 class ControlGraph:
-    reference: ReferenceNode
-    sum_node: SumNode
-    controller: ControllerNode
-    actuator: ActuatorNode
-    plant: PlantNode
-    sensor: SensorNode
-    disturbance: DisturbanceNode | None = None
-    noise: NoiseNode | None = None
-    taps: tuple[TapNode, ...] = field(default_factory=tuple)
+    topology_family: str
+    nodes: tuple[GraphNodeSpec, ...]
+    edges: tuple[GraphEdgeSpec, ...]
+    input_ports: tuple[PortSpec, ...]
+    output_ports: tuple[PortSpec, ...]
+    taps: tuple[TapSpec, ...] = field(default_factory=tuple)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ParameterizedNode:
+    spec: GraphNodeSpec
+    dynamics: ControlNode | None = None
+    parameters: dict[str, Any] = field(default_factory=dict)
+    nonlinearity: str = "none"
+    saturation_limit: float | None = None
+    rate_limit: float | None = None
+    bias: float = 0.0
 
 
 @dataclass(frozen=True)
 class ParameterizedGraph:
     graph: ControlGraph
-    structure_family: str
-    controller_family: str
-    actuator_family: str
-    plant_family: str
-    sensor_family: str
-    disturbance_family: str
-    noise_family: str
-    controller_dynamics: ControlNode
-    actuator_dynamics: ControlNode | None
-    plant_control_dynamics: ControlNode
-    plant_disturbance_dynamics: ControlNode | None
-    sensor_dynamics: ControlNode | None
-    actuator_saturation_limit: float | None = None
-    sensor_bias: float = 0.0
+    nodes: tuple[ParameterizedNode, ...]
     module_params: dict[str, dict[str, Any]] = field(default_factory=dict)
+    graph_metrics: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def is_parameterized(node: ControlNode) -> bool:

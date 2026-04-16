@@ -10,12 +10,15 @@ def test_sample_generation_is_reproducible() -> None:
     assert sample_a.module_params == sample_b.module_params
     assert sample_a.scenario == sample_b.scenario
     assert sample_a.signals == sample_b.signals
+    assert sample_a.teacher_signals == sample_b.teacher_signals
 
 
-def test_generated_sample_contains_multi_signal_outputs() -> None:
+def test_generated_sample_contains_grouped_multi_signal_outputs() -> None:
     sample = generate_sample(DatasetConfig(seed=7, count=1), sample_index=0)
 
-    assert "u_cmd" in sample.signals
-    assert "u_act" in sample.signals
-    assert "y_m" in sample.signals
-    assert len(sample.signals["y"]) == len(sample.t)
+    assert "external_inputs" in sample.signals
+    assert "primary_outputs" in sample.signals
+    assert "tap_signals" in sample.signals
+    assert sample.tap_specs
+    assert len(sample.graph_nodes) >= 8
+    assert len(sample.t) == len(next(iter(sample.signals["primary_outputs"].values())))

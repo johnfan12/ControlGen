@@ -4,27 +4,22 @@ import ast
 from typing import Any
 
 from controlgen.types import (
-    ActuatorNode,
     ControlGraph,
     ControlNode,
-    ControllerNode,
     DelayNode,
-    DisturbanceNode,
     FeedbackNode,
     GainNode,
+    GraphEdgeSpec,
+    GraphNodeSpec,
     Matrix,
     MatrixGainNode,
-    NoiseNode,
     PIDNode,
     ParallelNode,
-    PlantNode,
-    ReferenceNode,
+    PortSpec,
     SSNode,
-    SensorNode,
     SeriesNode,
-    SumNode,
     TFNode,
-    TapNode,
+    TapSpec,
 )
 
 
@@ -42,39 +37,64 @@ def parse_dsl(text: str) -> ControlNode | ControlGraph:
 
 def serialize_dsl(node: ControlNode | ControlGraph) -> str:
     if isinstance(node, ControlGraph):
-        taps = ", ".join(serialize_dsl(tap) for tap in node.taps)
+        nodes = ", ".join(serialize_dsl(item) for item in node.nodes)
+        edges = ", ".join(serialize_dsl(item) for item in node.edges)
+        input_ports = ", ".join(serialize_dsl(item) for item in node.input_ports)
+        output_ports = ", ".join(serialize_dsl(item) for item in node.output_ports)
+        taps = ", ".join(serialize_dsl(item) for item in node.taps)
         return (
-            "loop("
-            f"reference={serialize_dsl(node.reference)}, "
-            f"sum={serialize_dsl(node.sum_node)}, "
-            f"controller={serialize_dsl(node.controller)}, "
-            f"actuator={serialize_dsl(node.actuator)}, "
-            f"plant={serialize_dsl(node.plant)}, "
-            f"disturbance={serialize_dsl(node.disturbance) if node.disturbance else 'None'}, "
-            f"sensor={serialize_dsl(node.sensor)}, "
-            f"noise={serialize_dsl(node.noise) if node.noise else 'None'}, "
-            f"taps=[{taps}])"
+            "graph("
+            f"topology_family={node.topology_family!r}, "
+            f"nodes=[{nodes}], "
+            f"edges=[{edges}], "
+            f"input_ports=[{input_ports}], "
+            f"output_ports=[{output_ports}], "
+            f"taps=[{taps}], "
+            f"metadata={_format_value(node.metadata)})"
         )
-    if isinstance(node, ReferenceNode):
-        return f"reference(kind={node.kind!r}, name={node.name!r})"
-    if isinstance(node, SumNode):
-        return f"sum(signs={list(node.signs)!r}, name={node.name!r})"
-    if isinstance(node, ControllerNode):
-        return f"controller(kind={node.kind!r}, name={node.name!r})"
-    if isinstance(node, ActuatorNode):
-        return f"actuator(kind={node.kind!r}, name={node.name!r})"
-    if isinstance(node, PlantNode):
-        return f"plant(kind={node.kind!r}, name={node.name!r})"
-    if isinstance(node, DisturbanceNode):
+    if isinstance(node, GraphNodeSpec):
+        input_ports = ", ".join(serialize_dsl(item) for item in node.input_ports)
+        output_ports = ", ".join(serialize_dsl(item) for item in node.output_ports)
         return (
-            f"disturbance(kind={node.kind!r}, injection={node.injection!r}, name={node.name!r})"
+            "node("
+            f"id={node.node_id!r}, "
+            f"kind={node.kind!r}, "
+            f"family={node.family!r}, "
+            f"layer={node.layer!r}, "
+            f"inputs=[{input_ports}], "
+            f"outputs=[{output_ports}], "
+            f"parameters={_format_value(node.parameters)}, "
+            f"metadata={_format_value(node.metadata)})"
         )
-    if isinstance(node, SensorNode):
-        return f"sensor(kind={node.kind!r}, name={node.name!r})"
-    if isinstance(node, NoiseNode):
-        return f"noise(kind={node.kind!r}, name={node.name!r})"
-    if isinstance(node, TapNode):
-        return f"tap(signal={node.signal!r}, name={node.name!r})"
+    if isinstance(node, GraphEdgeSpec):
+        return (
+            "edge("
+            f"id={node.edge_id!r}, "
+            f"source={node.source_node!r}, "
+            f"source_port={node.source_port!r}, "
+            f"target={node.target_node!r}, "
+            f"target_port={node.target_port!r}, "
+            f"matrix={_format_value(node.matrix)}, "
+            f"role={node.signal_role!r})"
+        )
+    if isinstance(node, PortSpec):
+        return (
+            "port("
+            f"name={node.name!r}, "
+            f"direction={node.direction!r}, "
+            f"dimension={node.dimension!r}, "
+            f"role={node.role!r})"
+        )
+    if isinstance(node, TapSpec):
+        return (
+            "tap("
+            f"id={node.tap_id!r}, "
+            f"source={node.source_node!r}, "
+            f"source_port={node.source_port!r}, "
+            f"role={node.signal_role!r}, "
+            f"visibility={node.visibility!r}, "
+            f"dimension={node.dimension!r})"
+        )
     if isinstance(node, TFNode):
         return (
             f"tf(num={_format_value(node.num)}, den={_format_value(node.den)}, "
@@ -127,45 +147,61 @@ def serialize_dsl(node: ControlNode | ControlGraph) -> str:
     raise TypeError(f"Unsupported DSL object: {type(node)!r}")
 
 
-def ast_to_dict(node: ControlNode | ControlGraph | None) -> dict[str, Any] | None:
+def ast_to_dict(node: ControlNode | ControlGraph | GraphNodeSpec | GraphEdgeSpec | PortSpec | TapSpec | None) -> dict[str, Any] | None:
     if node is None:
         return None
     if isinstance(node, ControlGraph):
         return {
-            "type": "loop",
-            "reference": ast_to_dict(node.reference),
-            "sum": ast_to_dict(node.sum_node),
-            "controller": ast_to_dict(node.controller),
-            "actuator": ast_to_dict(node.actuator),
-            "plant": ast_to_dict(node.plant),
-            "disturbance": ast_to_dict(node.disturbance),
-            "sensor": ast_to_dict(node.sensor),
-            "noise": ast_to_dict(node.noise),
-            "taps": [ast_to_dict(tap) for tap in node.taps],
+            "type": "graph",
+            "topology_family": node.topology_family,
+            "nodes": [ast_to_dict(item) for item in node.nodes],
+            "edges": [ast_to_dict(item) for item in node.edges],
+            "input_ports": [ast_to_dict(item) for item in node.input_ports],
+            "output_ports": [ast_to_dict(item) for item in node.output_ports],
+            "taps": [ast_to_dict(item) for item in node.taps],
+            "metadata": node.metadata,
         }
-    if isinstance(node, ReferenceNode):
-        return {"type": "reference", "kind": node.kind, "name": node.name}
-    if isinstance(node, SumNode):
-        return {"type": "sum", "signs": list(node.signs), "name": node.name}
-    if isinstance(node, ControllerNode):
-        return {"type": "controller", "kind": node.kind, "name": node.name}
-    if isinstance(node, ActuatorNode):
-        return {"type": "actuator", "kind": node.kind, "name": node.name}
-    if isinstance(node, PlantNode):
-        return {"type": "plant", "kind": node.kind, "name": node.name}
-    if isinstance(node, DisturbanceNode):
+    if isinstance(node, GraphNodeSpec):
         return {
-            "type": "disturbance",
+            "type": "node",
+            "id": node.node_id,
             "kind": node.kind,
-            "injection": node.injection,
-            "name": node.name,
+            "family": node.family,
+            "layer": node.layer,
+            "inputs": [ast_to_dict(item) for item in node.input_ports],
+            "outputs": [ast_to_dict(item) for item in node.output_ports],
+            "parameters": node.parameters,
+            "metadata": node.metadata,
         }
-    if isinstance(node, SensorNode):
-        return {"type": "sensor", "kind": node.kind, "name": node.name}
-    if isinstance(node, NoiseNode):
-        return {"type": "noise", "kind": node.kind, "name": node.name}
-    if isinstance(node, TapNode):
-        return {"type": "tap", "signal": node.signal, "name": node.name}
+    if isinstance(node, GraphEdgeSpec):
+        return {
+            "type": "edge",
+            "id": node.edge_id,
+            "source": node.source_node,
+            "source_port": node.source_port,
+            "target": node.target_node,
+            "target_port": node.target_port,
+            "matrix": _to_json_value(node.matrix),
+            "role": node.signal_role,
+        }
+    if isinstance(node, PortSpec):
+        return {
+            "type": "port",
+            "name": node.name,
+            "direction": node.direction,
+            "dimension": node.dimension,
+            "role": node.role,
+        }
+    if isinstance(node, TapSpec):
+        return {
+            "type": "tap",
+            "id": node.tap_id,
+            "source": node.source_node,
+            "source_port": node.source_port,
+            "role": node.signal_role,
+            "visibility": node.visibility,
+            "dimension": node.dimension,
+        }
     if isinstance(node, TFNode):
         return {"type": "tf", "num": _to_json_value(node.num), "den": _to_json_value(node.den), "name": node.name}
     if isinstance(node, GainNode):
@@ -215,7 +251,7 @@ def ast_to_dict(node: ControlNode | ControlGraph | None) -> dict[str, Any] | Non
     raise TypeError(f"Unsupported DSL object: {type(node)!r}")
 
 
-def _parse_expr(expr: ast.AST) -> ControlNode | ControlGraph:
+def _parse_expr(expr: ast.AST) -> ControlNode | ControlGraph | GraphNodeSpec | GraphEdgeSpec | PortSpec | TapSpec:
     if not isinstance(expr, ast.Call):
         raise DSLParseError("Top-level expression must be a function call")
     if not isinstance(expr.func, ast.Name):
@@ -224,48 +260,64 @@ def _parse_expr(expr: ast.AST) -> ControlNode | ControlGraph:
     name = expr.func.id
     kwargs = {kw.arg: _literal(kw.value) for kw in expr.keywords if kw.arg is not None}
 
-    if name == "loop":
+    if name == "graph":
+        nodes_literal = kwargs.get("nodes", [])
+        edges_literal = kwargs.get("edges", [])
+        input_ports_literal = kwargs.get("input_ports", [])
+        output_ports_literal = kwargs.get("output_ports", [])
         taps_literal = kwargs.get("taps", [])
-        if taps_literal is None:
-            taps_literal = []
-        if not isinstance(taps_literal, list):
-            raise DSLParseError("loop(..., taps=[...]) requires a list")
+        if not all(isinstance(item, list) for item in (nodes_literal, edges_literal, input_ports_literal, output_ports_literal, taps_literal)):
+            raise DSLParseError("graph(...) nodes/edges/ports/taps must use list syntax")
         return ControlGraph(
-            reference=_parse_module_expr(kwargs.get("reference"), "reference"),
-            sum_node=_parse_module_expr(kwargs.get("sum"), "sum"),
-            controller=_parse_module_expr(kwargs.get("controller"), "controller"),
-            actuator=_parse_module_expr(kwargs.get("actuator"), "actuator"),
-            plant=_parse_module_expr(kwargs.get("plant"), "plant"),
-            disturbance=_parse_optional_module_expr(kwargs.get("disturbance"), "disturbance"),
-            sensor=_parse_module_expr(kwargs.get("sensor"), "sensor"),
-            noise=_parse_optional_module_expr(kwargs.get("noise"), "noise"),
-            taps=tuple(_parse_module_expr(item, "tap") for item in taps_literal),
+            topology_family=str(kwargs.get("topology_family", "layered_mimo_graph")),
+            nodes=tuple(_parse_graph_node(item) for item in nodes_literal),
+            edges=tuple(_parse_graph_edge(item) for item in edges_literal),
+            input_ports=tuple(_parse_port(item) for item in input_ports_literal),
+            output_ports=tuple(_parse_port(item) for item in output_ports_literal),
+            taps=tuple(_parse_tap(item) for item in taps_literal),
+            metadata=_as_dict(kwargs.get("metadata")),
         )
-    if name == "reference":
-        return ReferenceNode(kind=str(kwargs.get("kind", "step")), name=str(kwargs.get("name", "reference")))
-    if name == "sum":
-        signs = kwargs.get("signs", [1, -1])
-        if not isinstance(signs, list):
-            raise DSLParseError("sum(signs=[...]) requires a list of signs")
-        return SumNode(signs=tuple(int(sign) for sign in signs), name=str(kwargs.get("name", "sum")))
-    if name == "controller":
-        return ControllerNode(kind=str(kwargs.get("kind", "pid")), name=str(kwargs.get("name", "controller")))
-    if name == "actuator":
-        return ActuatorNode(kind=str(kwargs.get("kind", "ideal")), name=str(kwargs.get("name", "actuator")))
-    if name == "plant":
-        return PlantNode(kind=str(kwargs.get("kind", "first_order")), name=str(kwargs.get("name", "plant")))
-    if name == "disturbance":
-        return DisturbanceNode(
-            kind=str(kwargs.get("kind", "load_step")),
-            injection=str(kwargs.get("injection", "output")),
-            name=str(kwargs.get("name", "disturbance")),
+    if name == "node":
+        input_ports_literal = kwargs.get("inputs", [])
+        output_ports_literal = kwargs.get("outputs", [])
+        if not isinstance(input_ports_literal, list) or not isinstance(output_ports_literal, list):
+            raise DSLParseError("node(..., inputs=[...], outputs=[...]) requires lists")
+        return GraphNodeSpec(
+            node_id=str(kwargs.get("id", "node")),
+            kind=str(kwargs.get("kind", "process_unit")),
+            family=str(kwargs.get("family", "generic")),
+            layer=str(kwargs.get("layer", "process")),
+            input_ports=tuple(_parse_port(item) for item in input_ports_literal),
+            output_ports=tuple(_parse_port(item) for item in output_ports_literal),
+            parameters=_as_dict(kwargs.get("parameters")),
+            metadata=_as_dict(kwargs.get("metadata")),
         )
-    if name == "sensor":
-        return SensorNode(kind=str(kwargs.get("kind", "ideal")), name=str(kwargs.get("name", "sensor")))
-    if name == "noise":
-        return NoiseNode(kind=str(kwargs.get("kind", "none")), name=str(kwargs.get("name", "noise")))
+    if name == "edge":
+        return GraphEdgeSpec(
+            edge_id=str(kwargs.get("id", "edge")),
+            source_node=str(kwargs.get("source", "")),
+            source_port=str(kwargs.get("source_port", "y")),
+            target_node=str(kwargs.get("target", "")),
+            target_port=str(kwargs.get("target_port", "u")),
+            matrix=_as_matrix(kwargs.get("matrix")),
+            signal_role=str(kwargs.get("role", "internal")),
+        )
+    if name == "port":
+        return PortSpec(
+            name=str(kwargs.get("name", "port")),
+            direction=str(kwargs.get("direction", "input")),
+            dimension=int(kwargs.get("dimension", 1)),
+            role=str(kwargs.get("role", "internal")),
+        )
     if name == "tap":
-        return TapNode(signal=str(kwargs.get("signal", "y")), name=str(kwargs.get("name", "tap")))
+        return TapSpec(
+            tap_id=str(kwargs.get("id", "tap")),
+            source_node=str(kwargs.get("source", "")),
+            source_port=str(kwargs.get("source_port", "y")),
+            signal_role=str(kwargs.get("role", "internal")),
+            visibility=str(kwargs.get("visibility", "primary")),
+            dimension=int(kwargs.get("dimension", 1)),
+        )
     if name == "tf":
         return TFNode(
             num=_as_tuple(kwargs.get("num")),
@@ -307,15 +359,15 @@ def _parse_expr(expr: ast.AST) -> ControlNode | ControlGraph:
             name=str(kwargs.get("name", "ss")),
         )
     if name == "series":
-        blocks = tuple(_parse_expr(arg) for arg in expr.args)
+        blocks = tuple(_parse_control_expr(arg) for arg in expr.args)
         if len(blocks) < 2:
             raise DSLParseError("series(...) requires at least two blocks")
-        return SeriesNode(blocks=blocks)  # type: ignore[arg-type]
+        return SeriesNode(blocks=blocks)
     if name == "parallel":
-        blocks = tuple(_parse_expr(arg) for arg in expr.args)
+        blocks = tuple(_parse_control_expr(arg) for arg in expr.args)
         if len(blocks) < 2:
             raise DSLParseError("parallel(...) requires at least two blocks")
-        return ParallelNode(blocks=blocks)  # type: ignore[arg-type]
+        return ParallelNode(blocks=blocks)
     if name == "feedback":
         if "forward" not in kwargs or "feedback" not in kwargs:
             raise DSLParseError("feedback(...) requires forward= and feedback=")
@@ -329,7 +381,7 @@ def _parse_expr(expr: ast.AST) -> ControlNode | ControlGraph:
 
 def _parse_control_expr(value: Any) -> ControlNode:
     node = _parse_module_expr(value, "control")
-    if isinstance(node, ControlGraph):
+    if isinstance(node, (ControlGraph, GraphNodeSpec, GraphEdgeSpec, PortSpec, TapSpec)):
         raise DSLParseError("Graph DSL cannot be nested inside low-level control nodes")
     return node
 
@@ -340,73 +392,98 @@ def _parse_module_expr(value: Any, label: str) -> Any:
     return _parse_expr(value)
 
 
-def _parse_optional_module_expr(value: Any, label: str) -> Any:
-    if value is None:
-        return None
-    return _parse_module_expr(value, label)
+def _parse_graph_node(value: Any) -> GraphNodeSpec:
+    node = _parse_module_expr(value, "node")
+    if not isinstance(node, GraphNodeSpec):
+        raise DSLParseError("Expected node(...) in graph nodes list")
+    return node
 
 
-def _literal(expr: ast.AST) -> Any:
-    if isinstance(expr, ast.Call):
-        return expr
-    if isinstance(expr, ast.List | ast.Tuple):
-        return [_literal(item) for item in expr.elts]
-    if isinstance(expr, ast.Constant):
-        return expr.value
-    if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.USub):
-        value = _literal(expr.operand)
-        if isinstance(value, (int, float)):
-            return -value
-    raise DSLParseError(f"Unsupported DSL literal: {ast.dump(expr, include_attributes=False)}")
+def _parse_graph_edge(value: Any) -> GraphEdgeSpec:
+    edge = _parse_module_expr(value, "edge")
+    if not isinstance(edge, GraphEdgeSpec):
+        raise DSLParseError("Expected edge(...) in graph edges list")
+    return edge
+
+
+def _parse_port(value: Any) -> PortSpec:
+    port = _parse_module_expr(value, "port")
+    if not isinstance(port, PortSpec):
+        raise DSLParseError("Expected port(...)")
+    return port
+
+
+def _parse_tap(value: Any) -> TapSpec:
+    tap = _parse_module_expr(value, "tap")
+    if not isinstance(tap, TapSpec):
+        raise DSLParseError("Expected tap(...)")
+    return tap
+
+
+def _literal(node: ast.AST) -> Any:
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.List):
+        return [_literal(element) for element in node.elts]
+    if isinstance(node, ast.Tuple):
+        return tuple(_literal(element) for element in node.elts)
+    if isinstance(node, ast.Dict):
+        return {_literal(key): _literal(value) for key, value in zip(node.keys, node.values, strict=False)}
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return -_literal(node.operand)
+    if isinstance(node, ast.Call):
+        return node
+    raise DSLParseError(f"Unsupported literal in DSL: {ast.dump(node)}")
 
 
 def _as_tuple(value: Any) -> tuple[float, ...] | None:
     if value is None:
         return None
-    if not isinstance(value, list):
-        raise DSLParseError("Expected coefficient list")
-    return tuple(float(item) for item in value)
+    if not isinstance(value, (list, tuple)):
+        raise DSLParseError("Expected tuple/list of numbers")
+    return tuple(float(v) for v in value)
 
 
 def _as_number(value: Any) -> float | None:
     if value is None:
         return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    raise DSLParseError("Expected numeric parameter")
+    if not isinstance(value, (int, float)):
+        raise DSLParseError("Expected numeric value")
+    return float(value)
 
 
 def _as_matrix(value: Any) -> Matrix | None:
     if value is None:
         return None
-    if not isinstance(value, list):
-        raise DSLParseError("Expected matrix literal")
-    if not value:
-        return tuple()
-    if not all(isinstance(row, list) for row in value):
-        raise DSLParseError("Expected a nested list for matrix literal")
-    widths = {len(row) for row in value}
-    if len(widths) > 1:
-        raise DSLParseError("Matrix rows must have equal width")
-    return tuple(tuple(float(item) for item in row) for row in value)
+    if not isinstance(value, (list, tuple)):
+        raise DSLParseError("Expected matrix as list/tuple of rows")
+    rows = []
+    for row in value:
+        if not isinstance(row, (list, tuple)):
+            raise DSLParseError("Expected matrix row as list/tuple")
+        rows.append(tuple(float(item) for item in row))
+    return tuple(rows)
 
 
-def _to_json_value(value: Any) -> Any:
+def _as_dict(value: Any) -> dict[str, Any]:
     if value is None:
-        return None
-    if isinstance(value, tuple):
-        return [_to_json_value(item) for item in value]
-    return value
+        return {}
+    if not isinstance(value, dict):
+        raise DSLParseError("Expected dictionary literal")
+    return {str(key): item for key, item in value.items()}
 
 
 def _format_value(value: Any) -> str:
-    if value is None:
-        return "None"
     if isinstance(value, tuple):
-        return "[" + ", ".join(_format_value(item) for item in value) + "]"
+        return repr(list(value))
+    return repr(value)
+
+
+def _to_json_value(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_to_json_value(item) for item in value]
     if isinstance(value, list):
-        return "[" + ", ".join(_format_value(item) for item in value) + "]"
-    if isinstance(value, float):
-        formatted = f"{value:.8f}".rstrip("0").rstrip(".")
-        return formatted if formatted else "0"
-    return repr(value) if isinstance(value, str) else str(value)
+        return [_to_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _to_json_value(item) for key, item in value.items()}
+    return value
